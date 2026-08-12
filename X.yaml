@@ -9,7 +9,20 @@ catalog:
   # READ-ONLY BY CONSTRUCTION. This skill answers "what would this cost" and
   # never pays. It holds no key, signs nothing, and moves no money.
   execution: read
-  completion: provider_readback
+  # CORRECTED s510, from provider_readback, which was simply untrue.
+  #
+  # provider_readback promises that the default execution closure routes through
+  # provider.read / provider.mutate and returns that provider's durable
+  # readback. This skill does no such thing: it makes one bounded allowlisted
+  # request through http.query and seals a runx receipt over what came back.
+  # The hosted catalog enforced the promise we had written (
+  # provider_readback_unreachable) and it was right to.
+  #
+  # runtime_receipt is what this skill actually completes with, and it is the
+  # same pair runx/schema-guard publishes under: execution read, completion
+  # runtime_receipt. runx/web-fetch keeps provider_readback because its default
+  # runner really is one step on the web.fetch provider tool. We are not that.
+  completion: runtime_receipt
   requires_adapter: false
   approval: none
 
@@ -29,6 +42,28 @@ harness:
     # HAPPY PATH. A genuinely gated endpoint answers with a challenge.
     - name: probe-live-x402-endpoint
       runner: x402-probe
+      # OPERATOR JOURNEYS, added s510. The hosted catalog derives three
+      # readiness proofs from these (cold_selection, standalone_default,
+      # composed_reuse) and refuses a public package without them. They hang on
+      # THIS case deliberately: it is the only one that runs the actual default
+      # runner and expects a sealed status, which is what the checker counts.
+      #
+      # The confusors are real, published, adjacent skills a chooser could
+      # plausibly reach for instead of this one, which is the point of the
+      # requirement: it proves the skill is selectable cold rather than only
+      # findable by name.
+      operator_journeys:
+        - mode: standalone
+          confusors: [web-fetch, x402-pay]
+          request: Before I call this paid endpoint, tell me what it charges and on what terms.
+          expected_outcome: Return the parsed x402 challenge - amount, asset, network, pay-to and scheme - sealed in a receipt, without paying anything or holding a key.
+        - mode: composed
+          request: Continue from the challenge already probed for this endpoint and tell me whether it is affordable under my authority.
+          expected_outcome: Reuse the sealed challenge and its receipt digest as given, and reason only about affordability.
+          prior_evidence:
+            - The x402 challenge and sealed receipt produced by the standalone probe of this same URL.
+          must_not_repeat:
+            - Do not re-request the endpoint; the challenge is already sealed and re-probing bills the counterparty a request for nothing.
       inputs:
         url: https://circadian-agent.com/api/extract
         method: POST
