@@ -1,0 +1,20 @@
+# The MUST-NOT-FIRE case, and it matters as much as the one above. A probe that
+# reports x402 everywhere is useless: the whole value is telling gated apart from
+# ungated. example.com answers 200 and must come back speaks_x402 false.
+name: probe-unpaid-endpoint
+kind: skill
+target: ..
+runner: x402-probe
+inputs:
+  url: https://example.com
+  method: POST
+  allowed_hosts:
+    - example.com
+expect:
+  status: sealed
+  receipt:
+    schema: runx.receipt.v1
+metadata:
+  public_skill: x402-probe
+  source_case: probe-unpaid-endpoint
+  note: "A 200 is a valid answer, not a failure. This case exists so a regression that reports payment everywhere is caught."

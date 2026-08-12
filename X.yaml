@@ -1,0 +1,221 @@
+skill: x402-probe
+version: "0.2.0"
+
+catalog:
+  kind: graph
+  audience: public
+  visibility: public
+  role: canonical
+  # READ-ONLY BY CONSTRUCTION. This skill answers "what would this cost" and
+  # never pays. It holds no key, signs nothing, and moves no money.
+  execution: read
+  completion: provider_readback
+  requires_adapter: false
+  approval: none
+
+# -----------------------------------------------------------------------------
+# THE HARNESS, DECLARED INLINE.
+#
+# These cases are the same ones under `fixtures/`, which is where they were first
+# written and where their full reasoning is recorded. They are repeated here
+# because the registry's release gate reads DECLARED cases from this manifest and
+# does not count fixture files: with five green fixtures and no `harness` block,
+# publication is refused with [skill_harness_incomplete] telling you to declare
+# two cases. The fixture files are kept as the documented, commented form; this
+# block is what the gate reads.
+# -----------------------------------------------------------------------------
+harness:
+  cases:
+    # HAPPY PATH. A genuinely gated endpoint answers with a challenge.
+    - name: probe-live-x402-endpoint
+      runner: x402-probe
+      inputs:
+        url: https://circadian-agent.com/api/extract
+        method: POST
+        allowed_hosts:
+          - circadian-agent.com
+      expect:
+        status: sealed
+        receipt: { schema: runx.receipt.v1 }
+
+    # HAPPY PATH, and the other half of the answer: what the endpoint sells.
+    - name: probe-docs-reads-provider-manual
+      runner: x402-probe-docs
+      inputs:
+        url: https://circadian-agent.com/llms.txt
+        allowed_hosts:
+          - circadian-agent.com
+      expect:
+        status: sealed
+        steps: [read_docs]
+        step_outputs:
+          read_docs:
+            subset:
+              fetch_result:
+                data:
+                  decision: ready
+                  status: 200
+        receipt: { schema: runx.receipt.v1 }
+
+    # THE STOP CASE. No url means no read: the run seals a needs_agent naming
+    # what it is missing, and no request leaves the runtime. `status: sealed`
+    # alone would be satisfied by a successful fetch, so the decision and a zero
+    # byte count are asserted too.
+    - name: probe-docs-missing-url-needs-agent
+      runner: x402-probe-docs
+      inputs: {}
+      expect:
+        status: sealed
+        steps: [read_docs]
+        step_outputs:
+          read_docs:
+            subset:
+              fetch_result:
+                data:
+                  decision: needs_agent
+                  status: 0
+                  provenance:
+                    bytes: 0
+        receipt: { schema: runx.receipt.v1 }
+
+    # PROBE (TEST) - preparation must refuse a probe with no endpoint.
+    - name: probe-missing-inputs-refused
+      runner: x402-probe-get
+      inputs: {}
+      expect:
+        status: failure
+
+runners:
+  x402-probe:
+    default: true
+    type: graph
+    inputs:
+      url:
+        type: string
+        required: true
+        description: "Endpoint to probe. The probe reads its 402 challenge and never pays it."
+      method:
+        type: string
+        required: false
+        default: "POST"
+        description: "HTTP method. Most x402 endpoints answer a POST; some gate a GET."
+      body:
+        type: json
+        required: false
+        default: {}
+        description: "Optional request body. Many endpoints return their challenge for an empty body, which is why this defaults to {}."
+      allowed_hosts:
+        type: json
+        required: true
+        description: "Hosts this probe may reach, as exact names or leading-wildcard patterns. The runtime refuses anything outside it, so a caller cannot probe a host it did not name."
+    graph:
+      name: x402-probe
+      result_from: [probe]
+      steps:
+        - id: probe
+          label: read the payment challenge without paying it
+          tool: http.query
+          scopes:
+            - net:http
+          inputs:
+            # http.query takes a LIST of requests, not flat fields. One probe is
+            # one request: we never retry, because multiplying load on somebody
+            # else's endpoint to satisfy our curiosity is not free for them.
+            allowed_hosts: "$input.allowed_hosts"
+            requests:
+              - id: probe-1
+                url: "$input.url"
+                method: "$input.method"
+                body: "$input.body"
+
+  # ---------------------------------------------------------------------------
+  # THE GET RUNNER. This closes the coverage gap the SKILL.md used to state as a
+  # limit: `http.query` does not admit GET, so a `speaks_x402: false` from the
+  # default runner was only ever evidence about the POST path.
+  #
+  # WHY A SECOND RUNNER AND NOT A SECOND STEP. A second step in the default graph
+  # would fire a GET on every probe, doubling the requests we make against
+  # somebody else's endpoint to satisfy our own curiosity. The default runner
+  # deliberately makes exactly one request for that reason, and adding a step
+  # would quietly reverse that decision. A runner is chosen by the caller, so the
+  # second request only happens when someone asks for it.
+  #
+  # `http.read` is the GET-side twin of `http.query` - "bounded allowlisted GET
+  # batch through the governed native transport" - and takes the same
+  # allowed_hosts and requests shape, so the authority story is identical: hosts
+  # are declared, and the runtime refuses anything outside the list before a
+  # request leaves.
+  # ---------------------------------------------------------------------------
+  x402-probe-get:
+    type: graph
+    inputs:
+      url:
+        type: string
+        required: true
+        description: "Endpoint to probe over GET. The probe reads its 402 challenge and never pays it."
+      allowed_hosts:
+        type: json
+        required: true
+        description: "Hosts this probe may reach, as exact names or leading-wildcard patterns. Enforced by the runtime, so a caller cannot probe a host it did not name."
+    graph:
+      name: x402-probe-get
+      result_from: [probe_get]
+      steps:
+        - id: probe_get
+          label: read the payment challenge from a GET-gated endpoint without paying it
+          tool: http.read
+          scopes:
+            - net:http
+          inputs:
+            allowed_hosts: "$input.allowed_hosts"
+            requests:
+              - id: probe-get-1
+                url: "$input.url"
+
+  # ---------------------------------------------------------------------------
+  # THE DOCS RUNNER. A challenge says what an endpoint COSTS. It does not say
+  # what the endpoint SELLS - the x402 challenge carries a price, an asset, a
+  # network and a payee, and no description of the thing being bought. So a
+  # caller that probes an unfamiliar URL learns it would pay $0.01 and still has
+  # no idea for what.
+  #
+  # This runner reads the provider's own machine-readable documentation, which by
+  # convention lives at `/llms.txt`, within the same declared allowlist. Together
+  # the two answer the question a buyer actually has: what is this, and what does
+  # it cost.
+  #
+  # SECOND REASON, stated rather than hidden: this runner is also how the skill
+  # acquires the stop case the release gate requires. The gate wants one case
+  # whose run OUTCOME is a stop, and of the read-only network tools in the
+  # catalogue `web.fetch` is the only one that stops gracefully - given no url it
+  # seals a `needs_agent` asking the caller for one, where `http.query` and
+  # `http.read` raise a hard error that aborts the run. The capability is useful
+  # on its own merits and would be worth having anyway, but the gate is what sent
+  # us looking for it, and a reader deserves to know that.
+  # ---------------------------------------------------------------------------
+  x402-probe-docs:
+    type: graph
+    inputs:
+      url:
+        type: string
+        required: false
+        default: ""
+        description: "Documentation URL for the provider, conventionally https://<host>/llms.txt. Left empty, the run seals a needs_agent asking the caller which provider to read."
+      allowed_hosts:
+        type: json
+        required: false
+        default: []
+        description: "Hosts this read may reach, as exact names or leading-wildcard patterns. Enforced at every redirect hop, so a redirect cannot walk the read off the allowlist."
+    graph:
+      name: x402-probe-docs
+      result_from: [read_docs]
+      steps:
+        - id: read_docs
+          label: read what the endpoint sells, which the challenge never says
+          tool: web.fetch
+          scopes:
+            - net:allowlist
+          inputs:
+            url: "$input.url"
+            allowlist: "$input.allowed_hosts"
+            extract: "text"

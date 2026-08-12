@@ -1,0 +1,33 @@
+# The docs happy path: a price is only half an answer, and this is the other half.
+#
+# Dogfooded against a provider the author operates, so the case is real work
+# rather than a contrived fixture - the same endpoint the other cases probe for
+# its 402 publishes its terms at /llms.txt, which is what makes the pairing
+# checkable end to end: probe returns 0.005-0.01 USDC on Base, and this returns
+# the text saying what those calls buy.
+name: probe-docs-reads-provider-manual
+kind: skill
+target: ..
+runner: x402-probe-docs
+inputs:
+  url: https://circadian-agent.com/llms.txt
+  allowed_hosts:
+    - circadian-agent.com
+expect:
+  status: sealed
+  steps: [read_docs]
+  # Asserts the read actually happened - a `sealed` on its own would also be
+  # satisfied by the needs_agent stop this skill deliberately produces elsewhere.
+  step_outputs:
+    read_docs:
+      subset:
+        fetch_result:
+          data:
+            decision: ready
+            status: 200
+  receipt:
+    schema: runx.receipt.v1
+metadata:
+  public_skill: x402-probe
+  source_case: probe-docs-reads-provider-manual
+  note: "Reads the provider's own machine-readable manual within the declared allowlist. Verified against a live document the author operates."

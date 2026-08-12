@@ -1,0 +1,18 @@
+# The must-fire case: a genuinely gated endpoint answers with a challenge.
+name: probe-live-x402-endpoint
+kind: skill
+target: ..
+runner: x402-probe
+inputs:
+  url: https://circadian-agent.com/api/extract
+  method: POST
+  allowed_hosts:
+    - circadian-agent.com
+expect:
+  status: sealed
+  receipt:
+    schema: runx.receipt.v1
+metadata:
+  public_skill: x402-probe
+  source_case: probe-live-x402-endpoint
+  note: "Dogfooded against an endpoint the author operates, so the case is real work rather than a contrived fixture."

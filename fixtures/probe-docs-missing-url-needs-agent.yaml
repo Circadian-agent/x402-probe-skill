@@ -1,0 +1,48 @@
+# THE STOP CASE. Asked to read documentation without being told whose, the run
+# stops and asks, rather than guessing a host or reading nothing and calling it
+# an answer.
+#
+# The status is `sealed`, and that is not a contradiction. A stop is a legitimate
+# outcome with a receipt over it: the run reached a decision - "I need an input I
+# was not given" - and sealed that decision rather than erroring out. It is the
+# same shape the canonical runx/web-fetch skill declares for its own stop case.
+#
+# WHY THIS CASE COULD NOT BE BUILT ON THE PROBE RUNNERS, recorded so it is not
+# re-attempted. Three other routes to a stop were tried and all three abort the
+# run instead of sealing:
+#   - omitting the required `url` on `x402-probe`: `http.query` raises on the
+#     unresolved request rather than stopping;
+#   - probing a host outside `allowed_hosts`: the runtime refuses mid-run, after
+#     preparation has already succeeded, which aborts rather than seals;
+#   - an empty `url` on `http.query` or `http.read`: "url must be a non-empty
+#     string", again a raise.
+# The tool decides this, not the skill. `web.fetch` is the one read-only network
+# tool in the catalogue that treats missing input as a question to ask rather
+# than an error to throw.
+name: probe-docs-missing-url-needs-agent
+kind: skill
+target: ..
+runner: x402-probe-docs
+inputs: {}
+expect:
+  status: sealed
+  steps: [read_docs]
+  # `status: sealed` ALONE WOULD BE A WORTHLESS ASSERTION HERE - a successful
+  # fetch also seals, so the check would pass on the very outcome it exists to
+  # rule out. The decision is what distinguishes them, so the decision is what is
+  # asserted, along with zero bytes read to prove no request was made.
+  step_outputs:
+    read_docs:
+      subset:
+        fetch_result:
+          data:
+            decision: needs_agent
+            status: 0
+            provenance:
+              bytes: 0
+  receipt:
+    schema: runx.receipt.v1
+metadata:
+  public_skill: x402-probe
+  source_case: probe-docs-missing-url
+  note: "The stop case. No url means no read: the run seals a needs_agent asking the caller which provider to read, and no request leaves the runtime."

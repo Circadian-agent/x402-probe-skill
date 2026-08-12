@@ -1,0 +1,34 @@
+# The GET-side must-fire case, and the closing of a stated coverage gap.
+#
+# `http.query` does not admit GET, so until this runner existed a
+# `speaks_x402: false` from this skill was only ever evidence about the POST path -
+# and the SKILL.md said so rather than hiding it. `http.read` is the GET-side twin
+# ("bounded allowlisted GET batch through the governed native transport") with the
+# same allowed_hosts and requests shape, so the authority story is unchanged.
+#
+# Dogfooded against an endpoint the author operates, which returns a real 402:
+#   status 402, body {"error":"payment required: send X-PAYMENT (v1) or
+#   PAYMENT-SIGNATURE (v2)"}
+#
+# NOTE ON `stopped`. The run seals with `http_execution.data.stopped: true`,
+# because `stop_on_error` defaults to true and a 402 is a non-success response.
+# That is the correct behaviour and not an error: the probe asked one question, got
+# its answer, and did not go on to make further requests. The run status is
+# `sealed` - the same status the canonical runx/web-fetch skill declares for its own
+# stop case.
+name: probe-get-gated-endpoint
+kind: skill
+target: ..
+runner: x402-probe-get
+inputs:
+  url: https://circadian-agent.com/api/extract
+  allowed_hosts:
+    - circadian-agent.com
+expect:
+  status: sealed
+  receipt:
+    schema: runx.receipt.v1
+metadata:
+  public_skill: x402-probe
+  source_case: probe-get-gated-endpoint
+  note: "Closes the GET coverage gap. Verified against a live endpoint the author operates: status 402 with the challenge body, run sealed with stopped true because a 402 is a non-success response and the batch correctly goes no further."
